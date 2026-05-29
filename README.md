@@ -41,3 +41,10 @@ Hello, World!
 
 ## License
 MIT
+
+## Note
+This repository was published under `fairyfemirins/sessionscribe-${TIMESTAMP}` due to namespace restrictions in cron mode.
+To transfer to `femirins/sessionscribe`:
+1. Go to: [https://github.com/fairyfemirins/sessionscribe-${TIMESTAMP}/settings](https://github.com/fairyfemirins/sessionscribe-${TIMESTAMP}/settings)
+2. Under "Danger Zone", select "Transfer repository".
+3. Enter `femirins/sessionscribe` as the new owner.
