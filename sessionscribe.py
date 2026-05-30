@@ -2,97 +2,110 @@
 """
 SessionScribe: Terminal session auto-documenter.
 Records terminal sessions and generates a SESSION.md file with commands, outputs, and timestamps.
-
-Usage:
-    python3 sessionscribe.py --output SESSION.md
-    python3 sessionscribe.py --exclude-sensitive --output SESSION.md
 """
 
 import os
 import time
 import click
+import subprocess
 import pyte
-import markdown
 from datetime import datetime
+import re
 
-class TerminalRecorder:
-    def __init__(self, exclude_sensitive=False):
-        self.screen = pyte.Screen(80, 24)
-        self.stream = pyte.ByteStream(self.screen)
+class SessionRecorder:
+    def __init__(self, output_file="SESSION.md", exclude_sensitive=False):
+        self.output_file = output_file
         self.exclude_sensitive = exclude_sensitive
+        self.screen = pyte.Screen(80, 24)
+        self.stream = pyte.Stream(self.screen)
+        self.session_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.commands = []
         self.current_command = ""
-        self.sensitive_keywords = ["password", "token", "secret", "api_key"]
+        self.sensitive_patterns = [
+            r"\b(password|token|key|secret)\s*=\s*[^\s]+",
+            r"\b(export\s+)?(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN)\s*=\s*[^\s]+",
+            r"\b(curl|wget|http)\s+.*--header\s+.*Authorization:\s*[^\s]+"
+        ]
 
-    def feed(self, data):
-        """Feed terminal data to the recorder."""
-        self.stream.feed(data)
-        self._process_screen()
+    def _redact_sensitive(self, text):
+        if not self.exclude_sensitive:
+            return text
+        for pattern in self.sensitive_patterns:
+            text = re.sub(pattern, "[REDACTED]", text, flags=re.IGNORECASE)
+        return text
 
-    def _process_screen(self):
-        """Process the screen state and extract commands/outputs."""
-        lines = self.screen.display
-        for line in lines:
-            line = line.rstrip()
-            if line.endswith("$") or line.endswith("#"):
-                # New prompt detected
-                if self.current_command:
-                    self.commands.append({
-                        "command": self.current_command,
-                        "output": "",
-                        "timestamp": datetime.now().isoformat()
-                    })
-                    self.current_command = ""
-            elif line and not line.isspace():
-                if self.commands:
-                    # Append to the last command's output
-                    if self.exclude_sensitive:
-                        for keyword in self.sensitive_keywords:
-                            if keyword in line.lower():
-                                line = "[REDACTED]"
+    def _write_header(self):
+        with open(self.output_file, "w") as f:
+            f.write(f"# Terminal Session: {self.session_start}\n\n")
+            f.write("| Timestamp | Command | Output |\n")
+            f.write("|-----------|---------|--------|\n")
+
+    def _write_command(self, command, output):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        command = self._redact_sensitive(command)
+        output = self._redact_sensitive(output)
+        with open(self.output_file, "a") as f:
+            f.write(f"| {timestamp} | `{command}` | \n\n")
+            f.write(f"```\n{output}```\n\n")
+
+    def record(self, command, output):
+        if not self.commands:
+            self._write_header()
+        self.commands.append((command, output))
+        self._write_command(command, output)
+
+    def start_interactive(self):
+        import pty
+        import subprocess
+        import select
+        import termios
+        import tty
+
+        def read(fd):
+            data = os.read(fd, 1024)
+            self.stream.feed(data.decode())
+            return data
+
+        def write(fd, data):
+            os.write(fd, data)
+
+        def main():
+            (child_pid, fd) = pty.fork()
+            if child_pid == 0:
+                subprocess.run(os.environ.get("SHELL", "/bin/bash"))
+            else:
+                old_settings = termios.tcgetattr(fd)
+                try:
+                    tty.setraw(fd)
+                    while True:
+                        r, _, _ = select.select([fd], [], [], 0.1)
+                        if fd in r:
+                            data = read(fd)
+                            if data == b'exit\r\n':
                                 break
-                    self.commands[-1]["output"] += line + "\n"
-                else:
-                    # Start a new command
-                    self.current_command += line + "\n"
+                        time.sleep(0.1)
+                finally:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-    def generate_markdown(self):
-        """Generate Markdown from recorded commands."""
-        md_content = "# Terminal Session\n\n"
-        md_content += f"**Recorded at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        for cmd in self.commands:
-            md_content += f"## Command\n```bash\n{cmd['command'].strip()}\n```\n"
-            md_content += f"**Timestamp:** {cmd['timestamp']}\n\n"
-            if cmd["output"].strip():
-                md_content += "### Output\n```\n"
-                md_content += cmd["output"].strip() + "\n"
-                md_content += "```\n\n"
-            md_content += "---\n"
-        return md_content
+        main()
 
 @click.command()
-@click.option("--exclude-sensitive", is_flag=True, help="Exclude sensitive data from output.")
-@click.option("--output", default="SESSION.md", help="Output Markdown file.")
-@click.option("--record", is_flag=True, help="Start recording terminal session.")
-def cli(exclude_sensitive, output, record):
-    """SessionScribe: Terminal session auto-documenter."""
-    recorder = TerminalRecorder(exclude_sensitive=exclude_sensitive)
-    
-    if record:
-        click.echo("Recording terminal session... Press Ctrl+D to stop.")
-        try:
-            while True:
-                data = os.read(0, 1024)
-                recorder.feed(data)
-        except (EOFError, KeyboardInterrupt):
-            pass
-        
-        md_content = recorder.generate_markdown()
-        with open(output, "w") as f:
-            f.write(md_content)
-        click.echo(f"Session recorded and saved to {output}")
+@click.option("--output", "-o", default="SESSION.md", help="Output Markdown file.")
+@click.option("--exclude-sensitive", "-s", is_flag=True, help="Exclude sensitive data (passwords, tokens).")
+@click.option("--interactive", "-i", is_flag=True, help="Start an interactive terminal session.")
+@click.argument("command", required=False, nargs=-1)
+def cli(output, exclude_sensitive, interactive, command):
+    recorder = SessionRecorder(output, exclude_sensitive)
+    if interactive:
+        recorder.start_interactive()
     else:
-        click.echo("Use --record to start recording.")
+        import sys
+        if not command:
+            click.echo("Usage: sessionscribe --command 'your_command'")
+            sys.exit(1)
+        cmd_str = " ".join(command)
+        output = subprocess.run(cmd_str, shell=True, capture_output=True, text=True).stdout
+        recorder.record(cmd_str, output)
 
 if __name__ == "__main__":
     cli()
