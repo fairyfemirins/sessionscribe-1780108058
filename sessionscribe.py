@@ -1,83 +1,98 @@
 #!/usr/bin/env python3
+"""
+SessionScribe: Terminal session auto-documenter.
+Records terminal sessions and generates a SESSION.md file with commands, outputs, and timestamps.
 
+Usage:
+    python3 sessionscribe.py --output SESSION.md
+    python3 sessionscribe.py --exclude-sensitive --output SESSION.md
+"""
+
+import os
+import time
 import click
 import pyte
-import time
-import os
-import re
+import markdown
 from datetime import datetime
-from pathlib import Path
 
-# Global state
-screen = pyte.Screen(80, 24)
-stream = pyte.Stream()
-stream.attach(screen)
-recording = False
-session_log = []
-sensitive_patterns = [
-    r"\bpassword\b.*",
-    r"\bapi[_-]?key\b.*",
-    r"\bsecret\b.*",
-    r"\btoken\b.*"
-]
+class TerminalRecorder:
+    def __init__(self, exclude_sensitive=False):
+        self.screen = pyte.Screen(80, 24)
+        self.stream = pyte.ByteStream(self.screen)
+        self.exclude_sensitive = exclude_sensitive
+        self.commands = []
+        self.current_command = ""
+        self.sensitive_keywords = ["password", "token", "secret", "api_key"]
 
-def redact_sensitive(text):
-    """Redact sensitive data from text."""
-    for pattern in sensitive_patterns:
-        text = re.sub(pattern, "[REDACTED]", text, flags=re.IGNORECASE)
-    return text
+    def feed(self, data):
+        """Feed terminal data to the recorder."""
+        self.stream.feed(data)
+        self._process_screen()
 
-@click.group()
-def cli():
-    """SessionScribe: Terminal Session Auto-Documenter"""
-    pass
+    def _process_screen(self):
+        """Process the screen state and extract commands/outputs."""
+        lines = self.screen.display
+        for line in lines:
+            line = line.rstrip()
+            if line.endswith("$") or line.endswith("#"):
+                # New prompt detected
+                if self.current_command:
+                    self.commands.append({
+                        "command": self.current_command,
+                        "output": "",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    self.current_command = ""
+            elif line and not line.isspace():
+                if self.commands:
+                    # Append to the last command's output
+                    if self.exclude_sensitive:
+                        for keyword in self.sensitive_keywords:
+                            if keyword in line.lower():
+                                line = "[REDACTED]"
+                                break
+                    self.commands[-1]["output"] += line + "\n"
+                else:
+                    # Start a new command
+                    self.current_command += line + "\n"
 
-@cli.command()
-@click.option("--exclude-sensitive", is_flag=True, help="Exclude sensitive data from the output.")
-def start(exclude_sensitive):
-    """Start recording the terminal session."""
-    global recording, session_log
-    recording = True
-    session_log = []
-    click.echo("SessionScribe: Recording started. Press Ctrl+D or type 'exit' to stop.")
+    def generate_markdown(self):
+        """Generate Markdown from recorded commands."""
+        md_content = "# Terminal Session\n\n"
+        md_content += f"**Recorded at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        for cmd in self.commands:
+            md_content += f"## Command\n```bash\n{cmd['command'].strip()}\n```\n"
+            md_content += f"**Timestamp:** {cmd['timestamp']}\n\n"
+            if cmd["output"].strip():
+                md_content += "### Output\n```\n"
+                md_content += cmd["output"].strip() + "\n"
+                md_content += "```\n\n"
+            md_content += "---\n"
+        return md_content
+
+@click.command()
+@click.option("--exclude-sensitive", is_flag=True, help="Exclude sensitive data from output.")
+@click.option("--output", default="SESSION.md", help="Output Markdown file.")
+@click.option("--record", is_flag=True, help="Start recording terminal session.")
+def cli(exclude_sensitive, output, record):
+    """SessionScribe: Terminal session auto-documenter."""
+    recorder = TerminalRecorder(exclude_sensitive=exclude_sensitive)
     
-    # Simulate terminal input (for demo purposes)
-    try:
-        while recording:
-            line = input()
-            if line.strip() == "exit":
-                break
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            processed_line = redact_sensitive(line) if exclude_sensitive else line
-            session_log.append((timestamp, processed_line))
-            stream.feed(line + "\n")
-    except EOFError:
-        pass
-
-@cli.command()
-def stop():
-    """Stop recording and generate SESSION.md."""
-    global recording
-    recording = False
-    
-    if not session_log:
-        click.echo("SessionScribe: No session data recorded.")
-        return
-    
-    # Generate Markdown
-    md_content = f"# Terminal Session: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-    for timestamp, line in session_log:
-        if line.strip().startswith("#"):
-            md_content += f"\n## {line.strip()[1:].strip()}\n"
-        else:
-            md_content += f"**Command:** `{line.strip()}`\n\n**Output:**\n```\n"
-            # Simulate output (for demo purposes)
-            md_content += f"Output for '{line.strip()}'\n```\n\n"
-    
-    # Write to file
-    output_path = Path("SESSION.md")
-    output_path.write_text(md_content)
-    click.echo(f"SessionScribe: Session saved to {output_path}")
+    if record:
+        click.echo("Recording terminal session... Press Ctrl+D to stop.")
+        try:
+            while True:
+                data = os.read(0, 1024)
+                recorder.feed(data)
+        except (EOFError, KeyboardInterrupt):
+            pass
+        
+        md_content = recorder.generate_markdown()
+        with open(output, "w") as f:
+            f.write(md_content)
+        click.echo(f"Session recorded and saved to {output}")
+    else:
+        click.echo("Use --record to start recording.")
 
 if __name__ == "__main__":
     cli()

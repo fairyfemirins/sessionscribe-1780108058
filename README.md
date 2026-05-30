@@ -1,50 +1,34 @@
 # SessionScribe
 
-**Terminal Session Auto-Documenter**
+**Terminal session auto-documenter.**
 
-Records terminal sessions and generates a `SESSION.md` file with commands, outputs, and timestamps. Supports `--exclude-sensitive` flag to redact sensitive data.
+Records terminal sessions and generates a `SESSION.md` file with commands, outputs, and timestamps.
 
 ## Features
 - Records terminal sessions in real-time.
-- Generates a `SESSION.md` file with commands, outputs, and timestamps.
-- Supports `--exclude-sensitive` flag to redact sensitive data (e.g., passwords, API keys).
-- Lightweight and dependency-free (except for `click`, `pyte`, and `markdown`).
+- Generates Markdown documentation (`SESSION.md`).
+- Excludes sensitive data (e.g., passwords, tokens) with `--exclude-sensitive`.
+- Lightweight and dependency-minimal.
 
 ## Installation
 ```bash
-pip install sessionscribe
+pip install --break-system-packages click pyte markdown
+git clone https://github.com/femirins/sessionscribe.git
+cd sessionscribe
 ```
 
 ## Usage
 ```bash
 # Start recording
-sessionscribe start
-
-# Stop recording and generate SESSION.md
-sessionscribe stop
+python3 sessionscribe.py --record --output SESSION.md
 
 # Exclude sensitive data
-sessionscribe start --exclude-sensitive
+python3 sessionscribe.py --record --exclude-sensitive --output SESSION.md
 ```
 
-## Output Example
-```markdown
-# Terminal Session: 2026-05-29 20:00:00
-
-## Command: ls -la
-```
--rw-r--r--  1 user  staff   123 May 29 19:59 README.md
-
-## Command: echo "Hello, World!"
-Hello, World!
-```
+## Limitations
+- **Python Environment**: Requires `pyte` to be installed and detectable in the Python path. If you encounter `ModuleNotFoundError: No module named 'pyte'`, ensure it is installed in the correct environment.
+- **Static Fallback**: This project was self-generated due to API restrictions on primary discovery sources (e.g., Reddit).
 
 ## License
 MIT
-
-## Note
-This repository was published under `fairyfemirins/sessionscribe-${TIMESTAMP}` due to namespace restrictions in cron mode.
-To transfer to `femirins/sessionscribe`:
-1. Go to: [https://github.com/fairyfemirins/sessionscribe-${TIMESTAMP}/settings](https://github.com/fairyfemirins/sessionscribe-${TIMESTAMP}/settings)
-2. Under "Danger Zone", select "Transfer repository".
-3. Enter `femirins/sessionscribe` as the new owner.
